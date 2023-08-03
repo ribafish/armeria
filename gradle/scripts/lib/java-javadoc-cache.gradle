@@ -1,0 +1,53 @@
+import java.security.MessageDigest
+
+configure(rootProject) {
+    tasks.register('syncJavadoc')
+
+    rootProject.ext.javadocLinks.each {
+        def groupId = it['groupId']
+        def artifactId = it['artifactId']
+        def javadocUrl = it['url']
+        repositories {
+            // configure a repository containing the javadoc package-list or element-list
+            exclusiveContent {
+                forRepository {
+                    ivy {
+                        url = javadocUrl
+                        patternLayout {
+                            artifact 'package-list'
+                            artifact 'element-list'
+                        }
+                        metadataSources { artifact() }
+                    }
+                }
+
+                // only match artifacts for artifactId:artifactId so that gradle doesn't look for it anywhere else
+                filter { includeModule 'artifactId', 'artifactId' }
+            }
+        }
+
+        def artifactConfig = configurations.create(artifactId as String) {
+            canBeResolved = true
+            canBeConsumed = false
+            attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, ArtifactTypeDefinition.DIRECTORY_TYPE)
+        }
+
+        dependencies {
+            artifactConfig "${artifactId}:${artifactId}"
+        }
+
+        tasks.register("syncJavadoc${artifactId}", Sync) { syncTask ->
+            def name = "${groupId}/${artifactId}"
+            def javadocUrlSha1 = MessageDigest.getInstance('SHA1').digest(javadocUrl.getBytes('UTF-8')).encodeHex()
+            def listFileDir = new File(rootProject.ext.javadocCacheDir, "${name}/${javadocUrlSha1}")
+
+            dependsOn config
+            from config
+            to listFileDir
+
+            rootProject.tasks.getByName("syncJavadoc").configure {
+                it.dependsOn(syncTask)
+            }
+        }
+    }
+}

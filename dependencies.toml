@@ -863,7 +863,7 @@ javadocs = "https://developers.curioswitch.org/apidocs/java/"
 [libraries.reactor-core]
 module = "io.projectreactor:reactor-core"
 version.ref = "reactor"
-javadocs = "https://projectreactor.io/docs/core/release/api/"
+#javadocs = "https://projectreactor.io/docs/core/release/api/"
 [libraries.reactor-test]
 module = "io.projectreactor:reactor-test"
 version.ref = "reactor"
@@ -1091,7 +1091,7 @@ version.ref = "spring-boot2"
 [libraries.spring-boot2-starter]
 module = "org.springframework.boot:spring-boot-starter"
 version.ref = "spring-boot2"
-javadocs = "https://docs.spring.io/spring/docs/current/javadoc-api/"
+javadocs = "https://docs.spring.io/spring-framework/docs/current/javadoc-api/"
 [libraries.spring-boot2-starter-actuator]
 module = "org.springframework.boot:spring-boot-starter-actuator"
 version.ref = "spring-boot2"

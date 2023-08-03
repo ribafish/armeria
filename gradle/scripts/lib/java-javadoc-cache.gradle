@@ -1,25 +1,26 @@
 import java.security.MessageDigest
 
-def javadocCacheDir = new File(rootProject.projectDir, 'gradle/caches1/package-lists')
+def javadocCacheDir = new File(rootProject.buildDir, 'javadoc/ext/caches/package-lists')
 
-configure(rootProject) {
-    tasks.register('syncJavadoc')
+configurations {
+    javadocCacheConfig {
+        canBeResolved = true
+        canBeConsumed = false
+    }
 }
 
-def mapJavadocLinkToPattern = { String javadocLink ->
-    if (javadocLink.startsWith("https://www.javadoc.io")) {
-        return "https://www.javadoc.io/doc/[module]/[artifact]/[revision]"
-    } else {
-        logger.log(LogLevel.ERROR, "javadocLink '${javadocLink}' is missing a pattern mapping!")
-        return javadocLink
-    }
+def encodeSha1 = { String input ->
+    return MessageDigest.getInstance('SHA1').digest(input.getBytes('UTF-8')).encodeHex() as String
 }
 
 rootProject.ext.javadocLinks.each {
     def groupId = it['groupId'] as String
     def artifactId = it['artifactId'] as String
     def javadocUrl = it['url'] as String
-    logger.lifecycle("Setting up javadoc cache for ${groupId}:${artifactId}")
+    def moduleId = "${groupId}:${artifactId}"
+    def name = "${groupId}-${artifactId}"
+    def javadocUrlSha1 = encodeSha1(javadocUrl)
+    logger.debug("Setting up javadoc cache for ${moduleId} with $javadocUrl")
     repositories {
         // configure a repository containing the javadoc package-list or element-list
         exclusiveContent {
@@ -27,42 +28,93 @@ rootProject.ext.javadocLinks.each {
                 ivy {
                     url = javadocUrl
                     patternLayout {
-                        artifact mapJavadocLinkToPattern(javadocUrl)
-                        artifact 'package-list'
-                        artifact 'element-list'
+                        artifact "package-list"
                     }
                     metadataSources { artifact() }
+                    allowInsecureProtocol = true
+                }
+            }
+            forRepository {
+                ivy {
+                    url = javadocUrl
+                    patternLayout {
+                        artifact "element-list"
+                    }
+                    metadataSources { artifact() }
+                    allowInsecureProtocol = true
                 }
             }
 
             // only match artifacts for artifactId:artifactId so that gradle doesn't look for it anywhere else
-            filter { includeModule "${artifactId}", "${artifactId}" }
+            filter { includeModule "$name", "$javadocUrlSha1" }
         }
-    }
-
-    def artifactConfig = configurations.create("${artifactId}-javadocCacheConfiguration") {
-        canBeResolved = true
-        canBeConsumed = false
-        attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, ArtifactTypeDefinition.DIRECTORY_TYPE)
     }
 
     dependencies {
-        artifactConfig "${artifactId}:${artifactId}@element-list"
+        javadocCacheConfig "$name:$javadocUrlSha1"
     }
+}
 
-    tasks.register("syncJavadoc${artifactId}", Sync) { syncTask ->
-        def name = "${groupId}/${artifactId}"
-        def javadocUrlSha1 = MessageDigest.getInstance('SHA1').digest(javadocUrl.getBytes('UTF-8')).encodeHex()
-        def listFileDir = new File(javadocCacheDir, "${name}/${javadocUrlSha1}")
+def tmpJavadocCacheDir = new File(rootProject.buildDir, 'javadoc/ext/caches/tmp')
 
-        dependsOn config
-        from config
-        to listFileDir
+def copyExtJavadocsTask = tasks.register('copyExtJavadocs', Copy) {
+    dependsOn configurations.javadocCacheConfig
+    from configurations.javadocCacheConfig
+    into tmpJavadocCacheDir
+}
 
-        rootProject.tasks.getByName("syncJavadoc").configure {
-            it.dependsOn(syncTask)
+tasks.register('processExtJavadocs') {
+    dependsOn copyExtJavadocsTask
+    inputs.dir tmpJavadocCacheDir
+    outputs.dir javadocCacheDir
+    outputs.doNotCacheIf("Not worth caching.") { true }
+
+    doFirst {
+        def elementListNotSupported = JavaVersion.current() < JavaVersion.VERSION_1_10
+
+        def hashMap = new HashMap<String, Object>()
+        rootProject.ext.javadocLinks.each {
+            def javadocUrl = it['url'] as String
+            hashMap.put(encodeSha1(javadocUrl), it)
+        }
+
+        tmpJavadocCacheDir.listFiles().each { File file ->
+            logger.debug("Processing $file")
+            def extractedSha = file.name.replace('-', '').split('\\.')[0]
+
+            def groupId = hashMap[extractedSha]['groupId'] as String
+            def artifactId = hashMap[extractedSha]['artifactId'] as String
+            def javadocLink = hashMap[extractedSha]['url'] as String
+
+            // Rename to the correct filename
+            def name
+            if (file.readLines('utf-8').any { it.startsWith("module:") }) {
+                name = 'element-list'
+            } else {
+                name = 'package-list'
+            }
+
+            def movedFile = new File("$javadocCacheDir/$groupId/$artifactId/$extractedSha", name)
+            movedFile.parentFile.mkdirs()
+
+            if (elementListNotSupported) {
+                movedFile.withWriter('utf-8') { out ->
+                    // Find only the lines with a package name.
+                    file.filterLine(out, 'utf-8') { line ->
+                        def packageNamePattern = /^\p{javaJavaIdentifierStart}\p{javaJavaIdentifierPart}*(?:\.\p{javaJavaIdentifierStart}\p{javaJavaIdentifierPart}*)*$/
+                        return line.matches(packageNamePattern)
+                    }
+                }
+            } else {
+                movedFile << file.text
+            }
         }
     }
+}
+
+tasks.register('cleanExtJavadocCache', Delete) {
+    delete javadocCacheDir
+    delete tmpJavadocCacheDir
 }
 
 

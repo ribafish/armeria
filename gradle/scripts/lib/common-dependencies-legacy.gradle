@@ -1,7 +1,5 @@
 import org.yaml.snakeyaml.Yaml
 
-import java.security.MessageDigest
-
 buildscript {
     repositories {
         mavenCentral()
@@ -240,8 +238,6 @@ rootProject.ext {
         }
         return list
     }
-
-    javadocCacheDir = new File(rootProject.projectDir, 'gradle/caches1/package-lists')
 }
 
 subprojects {

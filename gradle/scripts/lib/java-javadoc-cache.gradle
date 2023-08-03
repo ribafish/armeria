@@ -1,53 +1,68 @@
 import java.security.MessageDigest
 
+def javadocCacheDir = new File(rootProject.projectDir, 'gradle/caches1/package-lists')
+
 configure(rootProject) {
     tasks.register('syncJavadoc')
+}
 
-    rootProject.ext.javadocLinks.each {
-        def groupId = it['groupId']
-        def artifactId = it['artifactId']
-        def javadocUrl = it['url']
-        repositories {
-            // configure a repository containing the javadoc package-list or element-list
-            exclusiveContent {
-                forRepository {
-                    ivy {
-                        url = javadocUrl
-                        patternLayout {
-                            artifact 'package-list'
-                            artifact 'element-list'
-                        }
-                        metadataSources { artifact() }
+def mapJavadocLinkToPattern = { String javadocLink ->
+    if (javadocLink.startsWith("https://www.javadoc.io")) {
+        return "https://www.javadoc.io/doc/[module]/[artifact]/[revision]"
+    } else {
+        logger.log(LogLevel.ERROR, "javadocLink '${javadocLink}' is missing a pattern mapping!")
+        return javadocLink
+    }
+}
+
+rootProject.ext.javadocLinks.each {
+    def groupId = it['groupId'] as String
+    def artifactId = it['artifactId'] as String
+    def javadocUrl = it['url'] as String
+    logger.lifecycle("Setting up javadoc cache for ${groupId}:${artifactId}")
+    repositories {
+        // configure a repository containing the javadoc package-list or element-list
+        exclusiveContent {
+            forRepository {
+                ivy {
+                    url = javadocUrl
+                    patternLayout {
+                        artifact mapJavadocLinkToPattern(javadocUrl)
+                        artifact 'package-list'
+                        artifact 'element-list'
                     }
+                    metadataSources { artifact() }
                 }
-
-                // only match artifacts for artifactId:artifactId so that gradle doesn't look for it anywhere else
-                filter { includeModule 'artifactId', 'artifactId' }
             }
+
+            // only match artifacts for artifactId:artifactId so that gradle doesn't look for it anywhere else
+            filter { includeModule "${artifactId}", "${artifactId}" }
         }
+    }
 
-        def artifactConfig = configurations.create(artifactId as String) {
-            canBeResolved = true
-            canBeConsumed = false
-            attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, ArtifactTypeDefinition.DIRECTORY_TYPE)
-        }
+    def artifactConfig = configurations.create("${artifactId}-javadocCacheConfiguration") {
+        canBeResolved = true
+        canBeConsumed = false
+        attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, ArtifactTypeDefinition.DIRECTORY_TYPE)
+    }
 
-        dependencies {
-            artifactConfig "${artifactId}:${artifactId}"
-        }
+    dependencies {
+        artifactConfig "${artifactId}:${artifactId}@element-list"
+    }
 
-        tasks.register("syncJavadoc${artifactId}", Sync) { syncTask ->
-            def name = "${groupId}/${artifactId}"
-            def javadocUrlSha1 = MessageDigest.getInstance('SHA1').digest(javadocUrl.getBytes('UTF-8')).encodeHex()
-            def listFileDir = new File(rootProject.ext.javadocCacheDir, "${name}/${javadocUrlSha1}")
+    tasks.register("syncJavadoc${artifactId}", Sync) { syncTask ->
+        def name = "${groupId}/${artifactId}"
+        def javadocUrlSha1 = MessageDigest.getInstance('SHA1').digest(javadocUrl.getBytes('UTF-8')).encodeHex()
+        def listFileDir = new File(javadocCacheDir, "${name}/${javadocUrlSha1}")
 
-            dependsOn config
-            from config
-            to listFileDir
+        dependsOn config
+        from config
+        to listFileDir
 
-            rootProject.tasks.getByName("syncJavadoc").configure {
-                it.dependsOn(syncTask)
-            }
+        rootProject.tasks.getByName("syncJavadoc").configure {
+            it.dependsOn(syncTask)
         }
     }
 }
+
+
